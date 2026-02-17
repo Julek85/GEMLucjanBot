@@ -1,0 +1,32 @@
+name: GEM Monthly Alert
+
+on:
+  schedule:
+    - cron: '0 7 1 * *'   # 1. dzień miesiąca, 07:00 UTC
+  workflow_dispatch:
+
+jobs:
+  gem:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send GEM Telegram alert (test)
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -e
+
+          TEXT="📈 GEM – SYGNAŁ MIESIĘCZNY (TEST)
+
+✅ System GitHub Actions → Telegram działa
+💰 Kapitał GEM: 560 €
+⏭ Rewizja: 1 dzień miesiąca
+
+(Jeśli to czytasz – jesteśmy gotowi na wersję produkcyjną GEM.)"
+
+          curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${CHAT_ID}" \
+            --data-urlencode "text=${TEXT}" \
+            -d "disable_web_page_preview=true" \
+            -d "parse_mode=HTML"
