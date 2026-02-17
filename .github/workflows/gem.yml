@@ -1,5 +1,4 @@
 name: GEM Monthly Alert
-
 on:
   workflow_dispatch:
   schedule:
