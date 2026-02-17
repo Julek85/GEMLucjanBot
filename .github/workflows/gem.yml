@@ -16,16 +16,6 @@ jobs:
         run: |
           set -e
 
-          # Bezpieczne tworzenie wielolinijkowego tekstu (bez problemów z cudzysłowami)
-          TEXT="$(cat <<'EOF'
-📈 GEM – SYGNAŁ MIESIĘCZNY (TEST)
-
-✅ System GitHub Actions → Telegram działa
-💰 Kapitał GEM: 560 €
-⏭ Rewizja: 1 dzień miesiąca
-EOF
-          )"
-
           curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
             --data-urlencode "text=${TEXT}" \
