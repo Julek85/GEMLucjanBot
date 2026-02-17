@@ -1,5 +1,6 @@
 name: GEM Monthly Alert
 on:
+
   workflow_dispatch:
   schedule:
     - cron: '0 7 1 * *'   # 1. dzień miesiąca, 07:00 UTC
