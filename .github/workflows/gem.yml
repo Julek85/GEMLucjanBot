@@ -1,4 +1,4 @@
-name: GEM Monthly Alert
+name: GEM Monthly Alert (Classic)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,47 @@ on:
 jobs:
   gem:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Send GEM Telegram alert (test)
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas yfinance
+
+      - name: Run GEM (classic 12-1 + 6M)
+        env:
+          # 🔧 TUTAJ ustaw tickery Yahoo Finance (edytuj jeśli trzeba)
+          GEM_TICKERS_JSON: >-
+            {
+              "USA (VUAA)": "VUAA.L",
+              "DM ex-US (EXUS)": "EXUS.L",
+              "EM (Vanguard FTSE EM Acc)": "VFEG.L",
+              "BONDS (VAGF)": "VAGF.DE"
+            }
+
+          GEM_RISK_ASSETS_JSON: >-
+            ["USA (VUAA)", "DM ex-US (EXUS)", "EM (Vanguard FTSE EM Acc)"]
+
+          GEM_BONDS_NAME: "BONDS (VAGF)"
+          GEM_RISK_OFF_THRESHOLD: "0"
+        run: |
+          python gem_bot.py
+
+      - name: Send Telegram alert
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -e
-
+          TEXT="$(cat gem_message.txt)"
           curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
             --data-urlencode "text=${TEXT}" \
