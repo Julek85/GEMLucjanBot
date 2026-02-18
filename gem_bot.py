@@ -160,8 +160,7 @@ def main():
     lines.append(f"Powod: {reason}")
     lines.append(f"Kapital GEM: {capital_eur} EUR")
 
-    msg = "
-".join(lines)
+    msg = "\n".join(lines)
 
     print("=== GEM MESSAGE START ===")
     print(msg)
