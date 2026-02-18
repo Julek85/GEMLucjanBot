@@ -109,7 +109,7 @@ if __name__ == "__main__":
 main()
 PY
 
-- name: Run GEM (classic 12-1 + 6M)
+- name: Run GEM (classic 12 -1 + 6M)
 env:
 # Tickery Yahoo Finance (jeśli któryś nie działa, dopasujemy)
 GEM_TICKERS_JSON: >-
