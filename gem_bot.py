@@ -198,8 +198,7 @@ def main():
     lines.append(f"Reason: {reason}")
     lines.append("Rule: Top1 score > 0 => RISK-ON, else => BONDS (RISK-OFF)")
 
-    msg = "
-".join(lines)
+    msg = "\n".join(lines)
 
     print("=== GEM MESSAGE START ===")
     print(msg)
