@@ -1,21 +1,21 @@
 import os
 import sys
-    import math
-    import json
-    from datetime import datetime, timezone
+import math
+import json
+from datetime import datetime, timezone
 
-    import pandas as pd
-    import yfinance as yf
+import pandas as pd
+import yfinance as yf
 
 
-    def month_end_series(series: pd.Series) -> pd.Series:
-        """Convert a daily price series to month-end prices (last available trading day each month)."""
-        s = series.dropna()
-        if s.empty:
-            return s
-        s.index = pd.to_datetime(s.index)
-        # Pandas >= 2.2: use 'ME' (month end) instead of deprecated 'M'
-        return s.resample('ME').last().dropna()
+def month_end_series(series: pd.Series) -> pd.Series:
+"""Convert a daily price series to month-end prices (last available trading day each month)."""
+s = series.dropna()
+if s.empty:
+return s
+s.index = pd.to_datetime(s.index)
+# Pandas >= 2.2: use 'ME' (month end) instead of deprecated 'M'
+return s.resample('ME').last().dropna()
 
 
     def total_return(monthly_prices: pd.Series, months: int, skip_last: int = 0) -> float:
