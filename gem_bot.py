@@ -14,7 +14,7 @@ def month_end_series(series: pd.Series) -> pd.Series:
     if s.empty:
         return s
     s.index = pd.to_datetime(s.index)
-    return s.resample("M").last().dropna()
+    return s.resample("ME").last().dropna()
 
 
 def total_return(monthly_prices: pd.Series, months: int, skip_last: int = 0) -> float:
