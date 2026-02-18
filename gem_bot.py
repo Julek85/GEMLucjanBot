@@ -49,7 +49,6 @@ def extract_price_series(data: pd.DataFrame, preferred: str, ticker: str) -> pd.
     if data is None or data.empty:
         raise ValueError("empty dataframe")
 
-    # MultiIndex columns (common when yfinance returns multi-ticker style)
     if isinstance(data.columns, pd.MultiIndex):
         level0 = data.columns.get_level_values(0)
         key = preferred if preferred in level0 else ("Close" if "Close" in level0 else level0[0])
@@ -70,6 +69,7 @@ def extract_price_series(data: pd.DataFrame, preferred: str, ticker: str) -> pd.
         s = s.iloc[:, 0]
     if not isinstance(s, pd.Series):
         s = pd.Series(s)
+
     return s
 
 
@@ -79,6 +79,7 @@ def main():
     bonds_name = os.environ.get("GEM_BONDS_NAME", "BONDS")
     threshold = float(os.environ.get("GEM_RISK_OFF_THRESHOLD", "0"))
     capital_eur = os.environ.get("GEM_CAPITAL_EUR", "560")
+    current_holding = os.environ.get("GEM_CURRENT_HOLDING", "").strip()
 
     if not tickers:
         print("ERROR: GEM_TICKERS_JSON is empty")
@@ -97,7 +98,14 @@ def main():
     last_me_date = {}
 
     for name, ticker in tickers.items():
-        data = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False, group_by="column")
+        data = yf.download(
+            ticker,
+            start=start,
+            end=end,
+            progress=False,
+            auto_adjust=False,
+            group_by="column",
+        )
         if data is None or data.empty:
             print(f"ERROR: No data for {name} ({ticker}). Check the Yahoo ticker.")
             sys.exit(2)
@@ -116,7 +124,6 @@ def main():
         monthly[name] = me
         last_me_date[name] = str(me.index[-1].date())
 
-    # Classic GEM score: 0.5*(12-1) + 0.5*(6M)
     details = {}
     for name, series in monthly.items():
         r12_1 = total_return(series, 12, skip_last=1)
@@ -129,38 +136,70 @@ def main():
 
     if (top_score is None) or (isinstance(top_score, float) and math.isnan(top_score)) or top_score <= threshold:
         choice = bonds_name
-        reason = f"RISK-OFF: najlepszy wynik {top_name} = {fmt_pct(top_score)} â¤ {fmt_pct(threshold)}"
+        reason = f"RISK-OFF: best {top_name} = {fmt_pct(top_score)} <= {fmt_pct(threshold)}"
     else:
         choice = top_name
-        reason = f"RISK-ON: wygrywa {top_name} = {fmt_pct(top_score)}"
+        reason = f"RISK-ON: winner {top_name} = {fmt_pct(top_score)}"
 
     now_local = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    # IMPORTANT: no quotes gymnastics; only join
-    lines = []
-    lines.append("GEM â sygnaÅ (klasyczny 12-1 + 6M)")
-    lines.append(f"Czas: {now_local}")
-    lines.append("")
-    lines.append("Ranking (risk assets):")
+    def short_name(x: str) -> str:
+        return (
+            x.replace("EM (Vanguard FTSE EM Acc)", "EM")
+            .replace("USA (VUAA)", "USA (VUAA)")
+            .replace("DM ex-US (EXUS)", "DM ex-US (EXUS)")
+            .replace("BONDS (VAGF)", "BONDS (VAGF)")
+        )
 
-    for n, _ in ranked:
+    if current_holding and current_holding == choice:
+        action_title = "TRZYMAJ (BEZ ZMIAN)"
+        trade_lines = [
+            f"Masz juz: {short_name(choice)}",
+            "Nic nie robisz w Trading 212.",
+        ]
+    elif current_holding and current_holding != choice:
+        action_title = "ZMIEN POZYCJE"
+        trade_lines = [
+            f"SPRZEDAJ: {short_name(current_holding)}",
+            f"KUP:      {short_name(choice)}",
+            f"KWOTA:    {capital_eur} EUR (100% kapitalu rotacyjnego)",
+        ]
+    else:
+        action_title = "DECYZJA"
+        trade_lines = [
+            f"KUP/TRZYMAJ: {short_name(choice)}",
+            f"KWOTA:       {capital_eur} EUR (100% kapitalu rotacyjnego)",
+        ]
+
+    lines = []
+    lines.append("GEM SIGNAL (Classic 12-1 + 6M)")
+    lines.append(f"Time: {now_local}")
+    lines.append("")
+    lines.append("RANKING (risk assets):")
+
+    for i, (n, _) in enumerate(ranked, start=1):
         d = details[n]
         lines.append(
-            f"- {n}: score {fmt_pct(d['score'])} | 12-1 {fmt_pct(d['r12_1'])} | 6M {fmt_pct(d['r6'])} | ME: {last_me_date[n]}"
+            f"{i}. {short_name(n)} | score {fmt_pct(d['score'])} | 12-1 {fmt_pct(d['r12_1'])} | 6M {fmt_pct(d['r6'])}"
         )
 
     lines.append("")
     bd = details[bonds_name]
     lines.append(
-        f"BONDS {bonds_name}: score {fmt_pct(bd['score'])} | 12-1 {fmt_pct(bd['r12_1'])} | 6M {fmt_pct(bd['r6'])} | ME: {last_me_date[bonds_name]}"
+        f"BONDS: {short_name(bonds_name)} | score {fmt_pct(bd['score'])} | 12-1 {fmt_pct(bd['r12_1'])} | 6M {fmt_pct(bd['r6'])}"
     )
 
     lines.append("")
-    lines.append(f"DECYZJA: {choice}")
-    lines.append(f"Powod: {reason}")
-    lines.append(f"Kapital GEM: {capital_eur} EUR")
+    lines.append(f"ACTION: {action_title}")
+    for t in trade_lines:
+        lines.append(t)
 
-    msg = "\n".join(lines)
+    lines.append("")
+    lines.append(f"Reason: {reason}")
+    lines.append("Rule: Top1 score > 0 => RISK-ON, else => BONDS (RISK-OFF)")
+
+    msg = "
+".join(lines)
 
     print("=== GEM MESSAGE START ===")
     print(msg)
