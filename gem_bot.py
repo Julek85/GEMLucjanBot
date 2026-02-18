@@ -130,8 +130,8 @@ def main():
     lines.append(f"â¹ï¸ {reason}")
     lines.append(f"ð° KapitaÅ GEM: {capital_eur}â¬ (rotacyjny, 1 ETF naraz)")
 
-    msg = "
-".join(lines)
+    msg ="\n".join(lines)
+
     print("=== GEM MESSAGE START ===")
     print(msg)
     print("=== GEM MESSAGE END ===")
