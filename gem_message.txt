@@ -1,18 +1,17 @@
 GEM SIGNAL - 2026-02-26
 
 TOP: ✅ DM ex-US (EXUS) (23.57%)
-📈 Przewaga nad BONDS: +21.65 pp
 🥈 Przewaga nad #2: +5.43 pp
 
-TRYB: RISK-ON ✅
+TRYB: RISK-OFF 🛡️
 
 RANKING:
 1. DM ex-US (EXUS): 23.57%
 2. EM (Vanguard FTSE EM Acc): 18.14%
 3. USA (VUAA): 13.19%
 
-BONDS (BONDS (VAGF)): 1.92%
+BONDS (VAGF.DE.): Brak danych
 
-AKCJA: TRZYMAJ
-Pozostań w: DM ex-US (EXUS)
+AKCJA: ZMIANA POZYCJI
+KUP: VAGF.DE.
 KWOTA: 583 EUR
