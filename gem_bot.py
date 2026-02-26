@@ -5,192 +5,160 @@ import json
 import time
 import logging
 from datetime import datetime, timezone
+from typing import Dict, Optional
 
 import pandas as pd
 import yfinance as yf
 
-# ---------------------------
-# Konfiguracja Logowania
-# ---------------------------
+# Konfiguracja logowania
 logger = logging.getLogger("gem")
-_log_level = os.environ.get("GEM_LOG_LEVEL", "INFO").upper().strip()
-logging.basicConfig(
-    level=getattr(logging, _log_level, logging.INFO),
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
+def is_finite(x: float) -> bool:
+    return isinstance(x, (int, float)) and not (math.isnan(x) or math.isinf(x))
 
 def month_end_series(series: pd.Series) -> pd.Series:
-    """Konwertuje dane dzienne na serie z końca miesiąca (pandas >= 2.2)."""
+    """Konwertuje dane dzienne na miesięczne (kompatybilność 'M')."""
     s = series.dropna()
-    if s.empty:
-        return s
-    s.index = pd.to_datetime(s.index)
-    return s.resample("ME").last().dropna()
+    if s.empty: return s
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    s = s[~s.index.isna()]
+    if s.empty: return s
+    return s.resample("M").last().dropna()
 
 def total_return(monthly_prices: pd.Series, months: int, skip_last: int = 0) -> float:
-    """Oblicza całkowitą stopę zwrotu; skip_last=1 implementuje momentum 12-1."""
     needed = months + 1 + skip_last
-    if len(monthly_prices) < needed:
+    if monthly_prices is None or len(monthly_prices) < needed:
         return float("nan")
-    end = monthly_prices.iloc[-1 - skip_last]
-    start = monthly_prices.iloc[-1 - skip_last - months]
-    return (end / start) - 1.0
+    try:
+        end = monthly_prices.iloc[-1 - skip_last]
+        start = monthly_prices.iloc[-1 - skip_last - months]
+        if pd.isna(start) or pd.isna(end) or start == 0:
+            return float("nan")
+        return (end / start) - 1.0
+    except Exception:
+        return float("nan")
 
 def fmt_pct(x: float) -> str:
-    """Formatowanie liczb jako procenty."""
-    if x is None or (isinstance(x, float) and (math.isnan(x) or math.isinf(x))):
-        return "n/a"
-    return f"{x*100:.2f}%"
+    return "n/a" if not is_finite(x) else f"{x * 100:.2f}%"
 
 def load_env_json(name: str, default):
-    """Ładuje konfigurację JSON z zmiennych środowiskowych."""
     raw = os.environ.get(name)
-    if not raw:
-        return default
+    if not raw: return default
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"Błąd: {name} nie jest poprawnym formatem JSON: {e}")
+    except Exception as e:
+        logger.error("Błąd JSON w %s: %s", name, e)
         sys.exit(2)
 
-def extract_price_series(data: pd.DataFrame, preferred: str, ticker: str, name: str = "") -> pd.Series:
-    """Wyciąga serie cenową, obsługując błędy i MultiIndex z yfinance."""
-    if data is None or data.empty:
-        raise ValueError("Pusta ramka danych (dataframe)")
-
-    used_key = None
+def extract_price_series(data: pd.DataFrame, ticker: str) -> pd.Series:
+    if data is None or data.empty: return pd.Series(dtype=float)
     if isinstance(data.columns, pd.MultiIndex):
-        level0 = data.columns.get_level_values(0)
-        if preferred in level0:
-            used_key = preferred
-        elif "Close" in level0:
-            used_key = "Close"
-        else:
-            used_key = level0[0]
-        tmp = data[used_key]
-        s = tmp[ticker] if ticker in tmp.columns else tmp.iloc[:, 0]
-    else:
-        if preferred in data.columns:
-            used_key = preferred
-            s = data[preferred]
-        elif "Close" in data.columns:
-            used_key = "Close"
-            s = data["Close"]
-        else:
-            used_key = data.columns[0]
-            s = data.iloc[:, 0]
+        lvl0 = data.columns.get_level_values(0)
+        key = "Adj Close" if "Adj Close" in lvl0 else "Close"
+        tmp = data[key]
+        return tmp[ticker] if hasattr(tmp, "columns") and ticker in tmp.columns else tmp.iloc[:, 0]
+    if "Adj Close" in data.columns: return data["Adj Close"]
+    if "Close" in data.columns: return data["Close"]
+    num = data.select_dtypes(include="number")
+    return num.iloc[:, 0] if not num.empty else pd.Series(dtype=float)
 
-    if isinstance(s, pd.DataFrame):
-        s = s.iloc[:, 0]
-    if not isinstance(s, pd.Series):
-        s = pd.Series(s)
-
-    display = f"{name} ({ticker})" if name else ticker
-    if used_key != preferred:
-        logger.warning(f"[{display}] '{preferred}' niedostępne -> używam '{used_key}' (brak korekty dywidend!).")
-    
-    return s
-
-def download_with_retry(ticker, start, end, tries=3, base_sleep=2.0, per_ticker_sleep=1.2):
-    """Pobiera dane z Yahoo Finance z systemem ponowień w razie błędu."""
-    if per_ticker_sleep > 0:
-        time.sleep(per_ticker_sleep)
-    
-    for i in range(tries):
+def download_with_retry(ticker: str, start: str, end: str, tries: int = 3, sleep_s: int = 2) -> pd.DataFrame:
+    last_err: Optional[Exception] = None
+    for i in range(1, tries + 1):
         try:
-            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
-            if df is None or df.empty:
-                raise ValueError("Brak danych (empty dataframe)")
-            return df
+            df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False, actions=False)
+            if df is not None and not df.empty: return df
+            logger.warning("Puste dane dla %s (próba %d/%d)", ticker, i, tries)
         except Exception as e:
-            sleep_s = base_sleep * (2 ** i)
-            logger.warning(f"[{ticker}] Błąd pobierania: {e} | Próba {i+1}/{tries} za {sleep_s:.1f}s")
-            time.sleep(sleep_s)
-    raise RuntimeError(f"[{ticker}] Nie udało się pobrać danych po {tries} próbach.")
+            last_err = e
+            logger.warning("Próba %d/%d dla %s nieudana: %s", i, tries, ticker, e)
+        time.sleep(sleep_s)
+    logger.error("Błąd krytyczny pobierania %s. Ostatni błąd: %s", ticker, last_err)
+    sys.exit(2)
 
 def main():
-    # 1. Ładowanie Konfiguracji
-    tickers = load_env_json("GEM_TICKERS_JSON", {})
+    # 1. Konfiguracja i Walidacja (Gienek Fixes)
+    tickers: Dict[str, str] = load_env_json("GEM_TICKERS_JSON", {})
     risk_assets = load_env_json("GEM_RISK_ASSETS_JSON", [])
     bonds_name = os.environ.get("GEM_BONDS_NAME", "BONDS")
     riskoff_threshold = float(os.environ.get("GEM_RISK_OFF_THRESHOLD", "0"))
-    switch_threshold = float(os.environ.get("GEM_SWITCH_THRESHOLD", "0"))
-    capital_eur = os.environ.get("GEM_CAPITAL_EUR", "0")
+    switch_threshold = float(os.environ.get("GEM_SWITCH_THRESHOLD", "0.01"))
+    capital_eur = os.environ.get("GEM_CAPITAL_EUR", "583")
     current_holding = os.environ.get("GEM_CURRENT_HOLDING", "").strip()
 
     if not tickers or not risk_assets:
-        logger.error("Błąd: GEM_TICKERS_JSON lub GEM_RISK_ASSETS_JSON jest pusty.")
+        logger.error("Brak danych w GEM_TICKERS_JSON lub GEM_RISK_ASSETS_JSON.")
+        sys.exit(2)
+    
+    missing = [n for n in risk_assets if n not in tickers]
+    if missing:
+        logger.error("Risk_assets zawiera nazwy nieobecne w tickers: %s", ", ".join(missing))
+        sys.exit(2)
+    
+    if bonds_name not in tickers:
+        logger.error("Brakuje obligacji w tickers. Klucz '%s' musi być w GEM_TICKERS_JSON.", bonds_name)
         sys.exit(2)
 
     # 2. Pobieranie Danych
     start = "2000-01-01"
     end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     monthly = {}
-    
     for name, ticker in tickers.items():
+        logger.info("Pobieram %s (%s)...", name, ticker)
         data = download_with_retry(ticker, start, end)
-        series = extract_price_series(data, "Adj Close", ticker, name)
-        me = month_end_series(series)
-        if me.empty:
-            logger.error(f"Brak danych miesięcznych dla {name}")
-            sys.exit(2)
-        monthly[name] = me
+        series = extract_price_series(data, ticker)
+        monthly[name] = month_end_series(series)
 
     # 3. Obliczenia Momentum
     details = {}
     for name, series in monthly.items():
         r12_1 = total_return(series, 12, skip_last=1)
         r6 = total_return(series, 6, skip_last=0)
-        score = 0.5 * r12_1 + 0.5 * r6
+        score = (0.5 * r12_1 + 0.5 * r6) if (is_finite(r12_1) and is_finite(r6)) else float("nan")
         details[name] = {"r12_1": r12_1, "r6": r6, "score": score}
 
-    # 4. Ranking i Decyzja
-    ranked = sorted([(n, details[n]["score"]) for n in risk_assets], key=lambda x: x[1], reverse=True)
-    top_name, top_score = ranked[0]
+    # 4. Logika GEM
+    ranked = [(n, details[n]["score"]) for n in risk_assets if is_finite(details[n]["score"])]
+    ranked.sort(key=lambda x: x[1], reverse=True)
 
-    if top_score <= riskoff_threshold:
+    if not ranked:
         choice = bonds_name
-        reason = f"RISK-OFF: najlepszy {top_name} ({fmt_pct(top_score)}) <= progu {fmt_pct(riskoff_threshold)}"
+        top_score = float("nan")
     else:
-        choice = top_name
-        reason = f"RISK-ON: wygrywa {top_name} ({fmt_pct(top_score)})"
+        top_name, top_score = ranked[0]
+        choice = top_name if top_score > riskoff_threshold else bonds_name
 
-    # 5. Logika Switch Threshold (Anti-noise)
-    if current_holding and choice != current_holding and switch_threshold > 0:
-        current_score = details.get(current_holding, {}).get("score", float("-inf"))
-        edge = top_score - current_score
-        if edge < switch_threshold:
-            logger.info(f"Zmiana zablokowana przez próg szumu: przewaga {fmt_pct(edge)} < {fmt_pct(switch_threshold)}")
-            choice = current_holding
-            reason += f" | BLOKADA ZMIANY (przewaga {fmt_pct(edge)} zbyt mała)"
+    # Anti-noise Switch
+    if current_holding and choice != current_holding and current_holding in details:
+        curr_score = details[current_holding]["score"]
+        if is_finite(top_score) and is_finite(curr_score):
+            if (top_score - curr_score) < switch_threshold:
+                choice = current_holding
 
-    # 6. Przygotowanie Komunikatu
-    now_local = datetime.now().strftime("%Y-%m-%d %H:%M")
-    
-    def short_name(x):
-        return x.split(" (")[0] # Skraca nazwy dla czytelności
-
-    if current_holding == choice:
-        action_title = "TRZYMAJ (BEZ ZMIAN)"
-        trade_instr = f"Masz już: {short_name(choice)}. Nic nie robisz w Trading 212."
+    # 5. Budowanie Raportu (Kosmetyka Gienka)
+    if not current_holding:
+        status = "USTAW PIERWSZĄ POZYCJĘ"
+        instr = f"KUP: {choice} za {capital_eur} EUR"
+    elif choice == current_holding:
+        status = "TRZYMAJ"
+        instr = f"Pozostań w: {choice}"
     else:
-        action_title = "ZMIEŃ POZYCJĘ"
-        trade_instr = f"SPRZEDAJ: {short_name(current_holding)} -> KUP: {short_name(choice)} (Kwota: {capital_eur} EUR)"
-
-    msg = f"""GEM SIGNAL (Classic 12-1 + 6M)
-Time: {now_local}
-
-RANKING (risk assets):
-"""
-    for i, (n, _) in enumerate(ranked, start=1):
-        d = details[n]
-        msg += f"{i}. {short_name(n)} | Score: {fmt_pct(d['score'])} (12-1: {fmt_pct(d['r12_1'])}, 6M: {fmt_pct(d['r6'])})\n"
+        status = "ZMIANA"
+        instr = f"SPRZEDAJ: {current_holding} -> KUP: {choice} za {capital_eur} EUR"
     
-    bd = details[bonds_name]
-    msg += f"\nBONDS: {short_name(bonds_name)} | Score: {fmt_pct(bd['score'])}\n"
-    msg += f"\nAKCJA: {action_title}\n{trade_instr}\n\nReason: {reason}"
+    msg = f"🚀 GEM SIGNAL: {status}\n\n{instr}\n\nRANKING (risk assets):\n"
+    if not ranked:
+        msg += "- Brak wystarczających danych (wszystko NaN lub za krótka historia)\n"
+    else:
+        for n, s in ranked:
+            msg += f"- {n}: {fmt_pct(s)} (12-1: {fmt_pct(details[n]['r12_1'])}, 6M: {fmt_pct(details[n]['r6'])})\n"
+    
+    b = details[bonds_name]
+    msg += f"\nBONDS ({bonds_name}): {fmt_pct(b['score'])} (12-1: {fmt_pct(b['r12_1'])}, 6M: {fmt_pct(b['r6'])})\n"
+    msg += f"\nRisk-off próg: {fmt_pct(riskoff_threshold)} | Próg zmiany: {fmt_pct(switch_threshold)}\n"
 
-    print("=== MESSAGE START ===\n" + msg + "\n=== MESSAGE END ===")
+    print(msg)
     with open("gem_message.txt", "w", encoding="utf-8") as f:
         f.write(msg)
 
