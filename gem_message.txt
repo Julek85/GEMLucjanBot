@@ -5,7 +5,7 @@ RANKING:
 
 BONDS score: -inf%
 
-AKCJA: ZMIANA POZYCJI
-SPRZEDAJ: DM ex-US (EXUS) -> KUP: EM (EIMI)
+AKCJA: TRZYMAJ
+Pozostań w: EM (EIMI)
 KWOTA: 583 EUR
-Status: ZMIANA: DM ex-US (EXUS) -> EM (EIMI)
+Status: Utrzymujemy pozycję
