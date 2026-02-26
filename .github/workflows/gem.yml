@@ -2,8 +2,8 @@ name: GEM Monthly Alert
 
 on:
   schedule:
-    - cron: "15 12 1 * *"   # 1-szy dzień miesiąca, 12:15 UTC
-  workflow_dispatch:        # Pozwala na ręczne uruchomienie przyciskiem
+    - cron: "15 12 1 * *"   # 1 dzień miesiąca, 12:15 UTC
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -29,7 +29,6 @@ jobs:
 
       - name: Run GEM Bot
         env:
-          # Dane konfiguracyjne z GitHub Secrets
           GEM_TICKERS_JSON: ${{ secrets.GEM_TICKERS_JSON }}
           GEM_RISK_ASSETS_JSON: ${{ secrets.GEM_RISK_ASSETS_JSON }}
           GEM_BONDS_NAME: ${{ secrets.GEM_BONDS_NAME }}
@@ -40,26 +39,19 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Dodaj zmiany jeśli pliki istnieją
           [ -f state.json ] && git add state.json || true
           [ -f gem_message.txt ] && git add gem_message.txt || true
-
-          # Jeśli nie ma zmian w indeksie, zakończ krok sukcesem
           if git diff --cached --quiet; then
-            echo "Brak zmian do zapisu."
+            echo "No changes"
             exit 0
           fi
-
           git commit -m "Update GEM state and report [skip ci]"
           git push
 
       - name: Send Telegram Alert
-        if: always() # Wyślij nawet jeśli skrypt Pythona padł
+        if: always()
         run: |
-          # Jeśli raport nie powstał, stwórz wiadomość o błędzie
-          test -f gem_message.txt || echo "🔴 GEM Bot Error: Skrypt nie wygenerował raportu! Sprawdź logi Actions." > gem_message.txt
-          
+          test -f gem_message.txt || echo "🔴 GEM Bot Error: Nie wygenerowano raportu!" > gem_message.txt
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
                -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
                --data-urlencode "text@gem_message.txt"
