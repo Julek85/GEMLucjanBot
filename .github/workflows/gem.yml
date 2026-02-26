@@ -1,9 +1,16 @@
 name: GEM Monthly Alert
 
 on:
-  workflow_dispatch: # Pozwala na ręczne uruchomienie przyciskiem
+  workflow_dispatch:
   schedule:
-    - cron: '0 7 1 * *' # 1. dzień miesiąca, 07:00 UTC
+    - cron: '0 7 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gem-monthly-alert
+  cancel-in-progress: true
 
 jobs:
   gem_job:
@@ -11,6 +18,9 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,21 +33,26 @@ jobs:
           python -m pip install pandas yfinance
 
       - name: Run GEM Bot
+        run: python gem_bot.py
         env:
-          # --- KONFIGURACJA ---
           GEM_TICKERS_JSON: '{"USA (VUAA)": "VUAA.L", "DM ex-US (EXUS)": "EXUS.L", "EM (Vanguard FTSE EM Acc)": "VFEG.L", "BONDS (VAGF)": "VAGF.DE"}'
           GEM_RISK_ASSETS_JSON: '["USA (VUAA)", "DM ex-US (EXUS)", "EM (Vanguard FTSE EM Acc)"]'
           GEM_BONDS_NAME: "BONDS (VAGF)"
-          GEM_RISK_OFF_THRESHOLD: "0"
-          GEM_SWITCH_THRESHOLD: "0.01"
           GEM_CAPITAL_EUR: "583"
-          GEM_CURRENT_HOLDING: "DM ex-US (EXUS)"
-        run: python gem_bot.py
+
+      - name: Commit and push state.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase
+          git add state.json
+          git diff --cached --quiet || git commit -m "Update GEM state.json [skip ci]"
+          git push
 
       - name: Send Telegram Alert
         if: always()
         run: |
-          MSG=$(cat gem_message.txt)
+          test -f gem_message.txt || echo "Błąd bota! Sprawdź logi GitHub Actions." > gem_message.txt
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
                -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
-               -d "text=$MSG"
+               --data-urlencode "text@gem_message.txt"
