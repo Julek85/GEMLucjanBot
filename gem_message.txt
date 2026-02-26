@@ -1,0 +1,1 @@
+🔴 GEM Bot Error: Brak tickerów w GEM_TICKERS_JSON.
