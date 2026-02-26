@@ -1,11 +1,17 @@
 GEM SIGNAL - 2026-02-26
 
-RANKING:
-1. EM (EIMI): 34.42%
+TOP:
+✅ EM (EIMI) — 34.40%
+📈 Przewaga nad BONDS: +134.40 pp
 
-BONDS score: -inf%
+TRYB: RISK-ON ✅
+
+RANKING (Momentum Avg):
+1) EM (EIMI): 34.40%
+
+BONDS ("BONDS (AGGH)": "AGGH.L"): -100.00%
 
 AKCJA: TRZYMAJ
 Pozostań w: EM (EIMI)
 KWOTA: 583 EUR
-Status: Utrzymujemy pozycję
+Status bota: Utrzymujemy obecną pozycję
