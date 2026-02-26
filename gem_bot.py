@@ -13,7 +13,6 @@ def fmt_pct(x: float) -> str:
     return f"{x*100:.2f}%"
 
 def extract_ticker_from_label(label: str) -> str:
-    # Wyciąga ticker z nawiasu, np. 'USA (VUAA)' -> 'VUAA'. Jeśli brak nawiasu -> ''.
     if not label: return ""
     m = re.search(r"\(([^)]+)\)", label)
     return m.group(1).strip().upper() if m else ""
@@ -30,7 +29,7 @@ def save_state(state: dict):
     STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def month_end_series(series: pd.Series) -> pd.Series:
-    """Kompatybilność z nowym pandas (ME vs M)"""
+    """Poprawka błędu 'M' vs 'ME' w nowym pandas"""
     s = series.dropna()
     if s.empty: return s
     try:
@@ -42,7 +41,7 @@ def main():
     tickers_map = json.loads(os.getenv("GEM_TICKERS_JSON", "{}"))
     risk_assets = json.loads(os.getenv("GEM_RISK_ASSETS_JSON", "[]"))
     bonds_name = os.getenv("GEM_BONDS_NAME", "BONDS (VAGF)")
-    capital_eur = os.getenv("GEM_CAPITAL_EUR", "0")
+    capital_eur = os.getenv("GEM_CAPITAL_EUR", "583")
 
     details = {}
     for name, ticker in tickers_map.items():
@@ -59,7 +58,7 @@ def main():
     top_name, top_score = ranked[0]
     choice = top_name if top_score > details.get(bonds_name, {"score": -1})["score"] else bonds_name
 
-    # ====== LOGIKA STANU (HOLD/SWITCH) ======
+    # ====== SEKCJA STANU (state.json) ======
     state = load_state()
     today = date.today()
     current_month = f"{today.year}-{today.month:02d}"
@@ -85,17 +84,17 @@ def main():
             state["last_rebalance_month"] = current_month
             save_state(state)
 
-    # ====== RAPORT ======
+    # ====== BUDOWANIE RAPORTU ======
     lines = [f"GEM SIGNAL - {datetime.now().strftime('%Y-%m-%d')}", "", "RANKING:"]
     for i, (n, _) in enumerate(ranked, 1):
         lines.append(f"{i}. {n}: {fmt_pct(details[n]['score'])}")
     
     lines.append(f"\nAKCJA: {action_title}")
     lines.append(f"{'SPRZEDAJ: ' + current_active_label + ' -> KUP: ' + choice if rebalance_needed else 'Pozostań w: ' + current_active_label}")
+    lines.append(f"KWOTA: {capital_eur} EUR")
     lines.append(f"\nStatus bota: {status_note}")
     
     OUT_FILE.write_text("\n".join(lines), encoding="utf-8")
-    print("\n".join(lines))
 
 if __name__ == "__main__":
     main()
