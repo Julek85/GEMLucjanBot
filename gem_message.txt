@@ -1,14 +1,17 @@
 GEM SIGNAL - 2026-02-26
 
-TOP: ✅ EM (EIMI) (33.27%)
+TOP: ✅ DM ex-US (EXUS) (23.30%)
+📈 Przewaga nad BONDS: +21.38 pp
 
-TRYB: RISK-OFF 🛡️
+TRYB: RISK-ON ✅
 
 RANKING:
-1. EM (EIMI): 33.27%
+1. DM ex-US (EXUS): 23.30%
+2. EM (Vanguard FTSE EM Acc): 18.00%
+3. USA (VUAA): 12.97%
 
-BONDS: Brak danych
+BONDS: 1.91%
 
 AKCJA: ZMIANA POZYCJI
-KUP: AGGH
+KUP: DM ex-US (EXUS)
 KWOTA: 583 EUR
