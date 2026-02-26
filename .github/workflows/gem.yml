@@ -1,59 +1,66 @@
 name: GEM Monthly Alert
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 7 * * *'
+    - cron: "15 12 1 * *"   # 1 dzień miesiąca, 12:15 UTC
+  workflow_dispatch:
 
 permissions:
-  contents: write
-
-concurrency:
-  group: gem-monthly-alert
-  cancel-in-progress: true
+  contents: write  # To jest kluczowe, aby bot mógł zapisywać pliki!
 
 jobs:
   gem_job:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
           fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pandas yfinance
+          pip install --upgrade pip
+          pip install pandas yfinance
 
       - name: Run GEM Bot
-        run: python gem_bot.py
         env:
-          GEM_TICKERS_JSON: '{"USA (VUAA)": "VUAA.L", "DM ex-US (EXUS)": "EXUS.L", "EM (Vanguard FTSE EM Acc)": "VFEG.L", "BONDS (VAGF)": "VAGF.DE"}'
-          GEM_RISK_ASSETS_JSON: '["USA (VUAA)", "DM ex-US (EXUS)", "EM (Vanguard FTSE EM Acc)"]'
-          GEM_BONDS_NAME: "BONDS (VAGF)"
-          GEM_CAPITAL_EUR: "583"
+          GEM_TICKERS_JSON: ${{ secrets.GEM_TICKERS_JSON }}
+          GEM_RISK_ASSETS_JSON: ${{ secrets.GEM_RISK_ASSETS_JSON }}
+          GEM_BONDS_NAME: ${{ secrets.GEM_BONDS_NAME }}
+          GEM_CAPITAL_EUR: ${{ secrets.GEM_CAPITAL_EUR }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python gem_bot.py
 
-      - name: Commit and push state.json
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase
-          git add state.json
-          git diff --cached --quiet || git commit -m "Update GEM state.json [skip ci]"
-          git push
+          
+          # Dodajemy oba pliki naraz
+          git add state.json gem_message.txt
+          
+          # Sprawdzamy czy są jakiekolwiek zmiany
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update GEM state and report [skip ci]"
+            git pull --rebase origin main  # Zapobiega błędom synchronizacji
+            git push
+          fi
 
       - name: Send Telegram Alert
         if: always()
         run: |
-          # Jeśli plik nie istnieje (bot padł), stwórz info o błędzie
-          test -f gem_message.txt || echo "Błąd skryptu Pythona! Sprawdź logi w zakładce Actions." > gem_message.txt
+          # Bezpiecznik: jeśli bot padnie, wyśle info o błędzie zamiast pustej wiadomości
+          test -f gem_message.txt || echo "🔴 GEM Bot Error: Nie wygenerowano raportu!" > gem_message.txt
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
                -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
                --data-urlencode "text@gem_message.txt"
