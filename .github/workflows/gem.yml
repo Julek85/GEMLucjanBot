@@ -1,64 +1,36 @@
 name: GEM Monthly Alert
-
 on:
   schedule:
-    # Uruchomienie 1-go dnia miesiąca o 12:15 UTC
     - cron: "15 12 1 * *"
-  workflow_dispatch: # Pozwala na ręczne uruchomienie przyciskiem
-
+  workflow_dispatch:
 permissions:
   contents: write
-
 jobs:
   gem_job:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas yfinance
-
+          python-python: "3.11"
+      - run: pip install pandas yfinance
       - name: Run GEM Bot
-        # Kluczowa zmiana: Łączymy skrypt z Twoimi sekretami
         env:
           GEM_TICKERS_JSON: ${{ secrets.GEM_TICKERS_JSON }}
           GEM_RISK_ASSETS_JSON: ${{ secrets.GEM_RISK_ASSETS_JSON }}
           GEM_BONDS_NAME: ${{ secrets.GEM_BONDS_NAME }}
           GEM_CAPITAL_EUR: ${{ secrets.GEM_CAPITAL_EUR }}
         run: python gem_bot.py
-
-      - name: Commit and push changes
+      - name: Save state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Dodajemy pliki do zapisu, jeśli istnieją
-          [ -f state.json ] && git add state.json || true
-          [ -f gem_message.txt ] && git add gem_message.txt || true
-
-          # Sprawdzamy czy są jakiekolwiek zmiany (żeby nie robić pustych commitów)
-          if git diff --cached --quiet; then
-            echo "Brak zmian do zapisu."
-            exit 0
-          fi
-
-          git commit -m "Update GEM state and report [skip ci]"
-          git push
-
-      - name: Send Telegram Alert
-        if: always() # Wyślij alert nawet jeśli skrypt Pythona zgłosi błąd
+          git add state.json gem_message.txt || true
+          git commit -m "Update state [skip ci]" || echo "No changes"
+          git push || echo "Push failed"
+      - name: Telegram
+        if: always()
         run: |
-          # Sprawdzenie czy plik raportu istnieje, jeśli nie - tworzymy info o błędzie
-          if [ ! -f gem_message.txt ]; then
-            echo "🔴 GEM Bot Error: Nie wygenerowano raportu! Sprawdź logi Actions na GitHubie." > gem_message.txt
-          fi
+          [ -f gem_message.txt ] || echo "Błąd bota" > gem_message.txt
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+               -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text@gem_message.txt"
