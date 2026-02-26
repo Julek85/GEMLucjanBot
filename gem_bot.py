@@ -1,129 +1,188 @@
+# GEM Bot – wersja produkcyjna (v2: ME/M kompatybilność)
+
 import os
-import sys
-import math
+import re
 import json
-import time
-import logging
-from datetime import datetime, timezone
+from pathlib import Path
+from datetime import date, datetime
 
 import pandas as pd
 import yfinance as yf
 
-# Logowanie błędów do konsoli GitHub Actions
-logger = logging.getLogger("gem")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+STATE_FILE = Path("state.json")
+OUT_FILE = Path("gem_message.txt")
+
+
+def fmt_pct(x: float) -> str:
+    return f"{x*100:.2f}%"
+
+
+def extract_ticker_from_label(label: str) -> str:
+    # Wyciąga ticker z nawiasu, np. 'USA (VUAA)' -> 'VUAA'. Jeśli brak nawiasu -> ''.
+    if not label:
+        return ""
+    m = re.search(r"\(([^)]+)\)", label)
+    return m.group(1).strip().upper() if m else ""
+
+
+def load_state():
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"active_label": "DM ex-US (EXUS)", "last_rebalance_month": None}
+
+
+def save_state(state: dict):
+    STATE_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
 
 def month_end_series(series: pd.Series) -> pd.Series:
-    """Konwertuje dane dzienne na miesięczne. Naprawiony błąd 'M' -> 'ME'."""
+    """Resample do końca miesiąca, kompatybilnie z pandas (ME vs M)."""
     s = series.dropna()
     if s.empty:
         return s
-    s.index = pd.to_datetime(s.index)
-    #  Kluczowa poprawka: ME zamiast M dla nowych wersji pandas
+    s.index = pd.to_datetime(s.index, errors="coerce")
+    s = s[~s.index.isna()]
+    if s.empty:
+        return s
     try:
         return s.resample("ME").last().dropna()
     except ValueError:
         return s.resample("M").last().dropna()
 
-def total_return(monthly_prices: pd.Series, months: int, skip_last: int = 0) -> float:
-    """Oblicza stopę zwrotu z przesunięciem (classic 12-1)[cite: 34]."""
-    needed = months + 1 + skip_last
-    if len(monthly_prices) < needed:
-        return float("nan")
-    end = monthly_prices.iloc[-1 - skip_last]
-    start = monthly_prices.iloc[-1 - skip_last - months]
-    return (end / start) - 1.0
 
-def fmt_pct(x: float) -> str:
-    if x is None or not (isinstance(x, (int, float)) and math.isfinite(x)):
-        return "n/a"
-    return f"{x*100:.2f}%"
+def calc_momentum(monthly: pd.Series) -> tuple[float, float]:
+    if len(monthly) < 13:
+        raise ValueError("Za mało danych (min. 13 miesięcy).")
 
-def extract_price_series(data: pd.DataFrame, ticker: str) -> pd.Series:
-    """Bezpieczne wyciąganie cen niezależnie od formatu yfinance."""
-    if data is None or data.empty:
-        raise ValueError(f"Brak danych dla {ticker}")
+    # 12-1: koniec miesiąca t-1 vs t-13
+    r12_1 = (monthly.iloc[-2] / monthly.iloc[-13]) - 1.0
 
-    # Obsługa MultiIndex (częste w nowym yfinance) [cite: 37, 38]
-    if isinstance(data.columns, pd.MultiIndex):
-        for col in ['Adj Close', 'Close']:
-            if col in data.columns.get_level_values(0):
-                tmp = data[col]
-                return tmp[ticker] if ticker in tmp.columns else tmp.iloc[:, 0]
-    
-    # Standardowe kolumny [cite: 39]
-    for col in ['Adj Close', 'Close']:
-        if col in data.columns:
-            return data[col]
-            
-    return data.iloc[:, 0]
+    # 6M: koniec miesiąca t vs t-6
+    if len(monthly) < 7:
+        raise ValueError("Za mało danych (min. 7 miesięcy) dla 6M.")
+    r6 = (monthly.iloc[-1] / monthly.iloc[-7]) - 1.0
+
+    return float(r12_1), float(r6)
+
 
 def main():
-    # Pobieranie konfiguracji z ENV [cite: 35, 48]
-    tickers = json.loads(os.environ.get("GEM_TICKERS_JSON", "{}"))
-    risk_assets = json.loads(os.environ.get("GEM_RISK_ASSETS_JSON", "[]"))
-    bonds_name = os.environ.get("GEM_BONDS_NAME", "BONDS (VAGF)")
-    capital_eur = os.environ.get("GEM_CAPITAL_EUR", "560")
-    current_holding = os.environ.get("GEM_CURRENT_HOLDING", "").strip()
+    try:
+        tickers = json.loads(os.environ.get("GEM_TICKERS_JSON", "{}"))
+        risk_assets = json.loads(os.environ.get("GEM_RISK_ASSETS_JSON", "[]"))
+        bonds_name = os.environ.get("GEM_BONDS_NAME", "BONDS (VAGF)")
+        capital_eur = os.environ.get("GEM_CAPITAL_EUR", "0")
 
-    if not tickers or not risk_assets:
-        logger.error("Błąd konfiguracji JSON[cite: 35].")
-        sys.exit(2)
+        if not tickers or not risk_assets:
+            raise ValueError("Brak konfiguracji ENV: GEM_TICKERS_JSON i/lub GEM_RISK_ASSETS_JSON.")
 
-    start = "2000-01-01"
-    end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    monthly = {}
+        yf_symbols = list(set(tickers.values()))
+        data = yf.download(
+            yf_symbols,
+            period="3y",
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            group_by='column'
+        )
 
-    for name, ticker in tickers.items():
-        logger.info(f"Pobieram: {name} ({ticker})")
-        # Pobieranie z automatycznym retry [cite: 43, 44]
-        df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False)
-        
-        try:
-            series = extract_price_series(df, ticker)
-            me = month_end_series(series)
-            if me.empty:
-                raise ValueError("Brak danych po resamplingu")
-            monthly[name] = me
-        except Exception as e:
-            logger.error(f"Błąd danych dla {name}: {e}[cite: 51].")
-            sys.exit(2)
+        def get_adj(symbol: str) -> pd.Series:
+            if isinstance(data.columns, pd.MultiIndex):
+                return data[("Adj Close", symbol)]
+            return data["Adj Close"]
 
-    # Obliczanie Momentum (12-1 + 6M) [cite: 53]
-    details = {}
-    for name, series in monthly.items():
-        r12_1 = total_return(series, 12, skip_last=1)
-        r6 = total_return(series, 6, skip_last=0)
-        score = 0.5 * r12_1 + 0.5 * r6
-        details[name] = {"r12_1": r12_1, "r6": r6, "score": score}
+        details = {}
+        for label, sym in tickers.items():
+            adj = get_adj(sym)
+            monthly = month_end_series(adj)
+            r12_1, r6 = calc_momentum(monthly)
+            score = (r12_1 + r6) / 2.0
+            details[label] = {"sym": sym, "r12_1": r12_1, "r6": r6, "score": score}
 
-    # Ranking aktywów [cite: 61]
-    ranked = sorted(((n, details[n]["score"]) for n in risk_assets), key=lambda x: x[1], reverse=True)
-    top_name, top_score = ranked[0]
-    
-    # Decyzja RISK-ON/OFF [cite: 54]
-    choice = top_name if top_score > 0 else bonds_name
+        ranked = sorted(
+            [(name, details[name]["score"]) for name in risk_assets],
+            key=lambda x: x[1],
+            reverse=True
+        )
 
-    # Budowanie wiadomości [cite: 58, 60]
-    status = "TRZYMAJ" if choice == current_holding else "ZMIANA"
-    instr = f"Pozostań w: {choice}" if choice == current_holding else f"SPRZEDAJ: {current_holding} -> KUP: {choice}"
-    
-    lines = [
-        f"GEM SIGNAL: {status}",
-        f"AKCJA: {instr}",
-        f"KWOTA: {capital_eur} EUR",
-        "",
-        "RANKING:"
-    ]
-    for i, (n, s) in enumerate(ranked, 1):
-        lines.append(f"{i}. {n}: {fmt_pct(s)} (12-1: {fmt_pct(details[n]['r12_1'])}, 6M: {fmt_pct(details[n]['r6'])})")
-    
-    lines.append(f"\nBONDS: {fmt_pct(details[bonds_name]['score'])}")
+        choice, top_score = ranked[0]
 
-    msg = "\n".join(lines)
-    with open("gem_message.txt", "w", encoding="utf-8") as f:
-        f.write(msg)
-    logger.info("Wiadomość wygenerowana pomyślnie.")
+        # ====== SEKCJA STANU (state.json) ======
+        state = load_state()
+        today = date.today()
+        current_month = f"{today.year}-{today.month:02d}"
+
+        current_active_label = state.get("active_label", "DM ex-US (EXUS)")
+        current_ticker = extract_ticker_from_label(current_active_label)
+        new_ticker = extract_ticker_from_label(choice)
+
+        if not new_ticker:
+            raise ValueError(f"Błąd: Etykieta '{choice}' nie zawiera tickera w nawiasach!")
+
+        is_new_month = (state.get("last_rebalance_month") != current_month)
+        is_different_asset = (current_ticker != new_ticker)
+
+        if is_new_month and is_different_asset:
+            rebalance_needed = True
+            action_title = "ZMIANA POZYCJI"
+            status_note = f"WYKRYTO ZMIANĘ: {current_active_label} -> {choice}"
+            state["active_label"] = choice
+            state["last_rebalance_month"] = current_month
+            save_state(state)
+        else:
+            rebalance_needed = False
+            action_title = "TRZYMAJ"
+            status_note = "Utrzymujemy obecną pozycję"
+            if is_new_month:
+                state["last_rebalance_month"] = current_month
+                save_state(state)
+        # ====== /SEKCJA STANU ======
+
+        lines = [
+            "GEM SIGNAL (Classic 12-1 + 6M)",
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "",
+            "RANKING:",
+        ]
+
+        for i, (name, _) in enumerate(ranked, 1):
+            d = details[name]
+            lines.append(f"{i}. {name}: {fmt_pct(d['score'])} (12-1: {fmt_pct(d['r12_1'])}, 6M: {fmt_pct(d['r6'])})")
+
+        if bonds_name in details:
+            lines.append(f"
+BONDS: {fmt_pct(details[bonds_name]['score'])}")
+
+        lines.append(f"
+AKCJA: {action_title}")
+        if rebalance_needed:
+            lines.append(f"SPRZEDAJ: {current_active_label} -> KUP: {choice}")
+        else:
+            lines.append(f"Pozostań w: {current_active_label}")
+
+        lines.append(f"KWOTA: {capital_eur} EUR")
+        lines.append(f"
+Status bota: {status_note}")
+        lines.append(f"Reason: RISK-ON: wygrywa {choice} ({fmt_pct(top_score)})")
+
+        OUT_FILE.write_text("
+".join(lines), encoding="utf-8")
+
+    except Exception as e:
+        OUT_FILE.write_text(
+            "GEM Bot ERROR
+" +
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+" +
+            f"{type(e).__name__}: {e}
+",
+            encoding="utf-8"
+        )
+        raise
+
 
 if __name__ == "__main__":
     main()
