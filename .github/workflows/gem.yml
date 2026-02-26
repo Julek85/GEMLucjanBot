@@ -1,55 +1,43 @@
-name: GEM Monthly Alert (Classic)
+name: GEM Monthly Alert
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Pozwala na ręczne uruchomienie przyciskiem
   schedule:
-    - cron: '0 7 1 * *'   # 1. dzień miesiąca, 07:00 UTC
+    - cron: '0 7 1 * *' # 1. dzień miesiąca, 07:00 UTC
 
 jobs:
-  gem:
+  gem_job:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install pandas yfinance
+          python -m pip install --upgrade pip
+          python -m pip install pandas yfinance
 
-      - name: Run GEM (classic 12-1 + 6M)
+      - name: Run GEM Bot
         env:
-          # 🔧 TUTAJ ustaw tickery Yahoo Finance (edytuj jeśli trzeba)
-          GEM_TICKERS_JSON: >-
-            {
-              "USA (VUAA)": "VUAA.L",
-              "DM ex-US (EXUS)": "EXUS.L",
-              "EM (Vanguard FTSE EM Acc)": "VFEG.L",
-              "BONDS (VAGF)": "VAGF.DE"
-            }
-
-          GEM_RISK_ASSETS_JSON: >-
-            ["USA (VUAA)", "DM ex-US (EXUS)", "EM (Vanguard FTSE EM Acc)"]
-
+          # --- KONFIGURACJA ---
+          GEM_TICKERS_JSON: '{"USA (VUAA)": "VUAA.L", "DM ex-US (EXUS)": "EXUS.L", "EM (Vanguard FTSE EM Acc)": "VFEG.L", "BONDS (VAGF)": "VAGF.DE"}'
+          GEM_RISK_ASSETS_JSON: '["USA (VUAA)", "DM ex-US (EXUS)", "EM (Vanguard FTSE EM Acc)"]'
           GEM_BONDS_NAME: "BONDS (VAGF)"
           GEM_RISK_OFF_THRESHOLD: "0"
-        run: |
-          python gem_bot.py
+          GEM_SWITCH_THRESHOLD: "0.01"
+          GEM_CAPITAL_EUR: "583"
+          GEM_CURRENT_HOLDING: "DM ex-US (EXUS)"
+        run: python gem_bot.py
 
-      - name: Send Telegram alert
-        env:
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Send Telegram Alert
+        if: always()
         run: |
-          set -e
-          TEXT="$(cat gem_message.txt)"
-          curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-            -d "chat_id=${CHAT_ID}" \
-            --data-urlencode "text=${TEXT}" \
-            -d "disable_web_page_preview=true"
+          MSG=$(cat gem_message.txt)
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+               -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+               -d "text=$MSG"
