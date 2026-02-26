@@ -52,7 +52,8 @@ jobs:
       - name: Send Telegram Alert
         if: always()
         run: |
-          test -f gem_message.txt || echo "Błąd bota! Sprawdź logi GitHub Actions." > gem_message.txt
+          # Jeśli plik nie istnieje (bot padł), stwórz info o błędzie
+          test -f gem_message.txt || echo "Błąd skryptu Pythona! Sprawdź logi w zakładce Actions." > gem_message.txt
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
                -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
                --data-urlencode "text@gem_message.txt"
