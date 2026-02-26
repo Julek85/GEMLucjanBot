@@ -1,1 +1,11 @@
-🔴 GEM Bot Error: Brak tickerów w GEM_TICKERS_JSON.
+GEM SIGNAL - 2026-02-26
+
+RANKING:
+1. EM (EIMI): 34.42%
+
+BONDS score: -inf%
+
+AKCJA: ZMIANA POZYCJI
+SPRZEDAJ: DM ex-US (EXUS) -> KUP: EM (EIMI)
+KWOTA: 583 EUR
+Status: ZMIANA: DM ex-US (EXUS) -> EM (EIMI)
