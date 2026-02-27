@@ -1,17 +1,20 @@
-GEM SIGNAL - 2026-02-26
+📌 GEM SIGNAL — 2026-02-27
 
-TOP: ✅ DM ex-US (EXUS) (23.57%)
-🥈 Przewaga nad #2: +5.43 pp
+🏆 TOP: ✅ DM ex-US (EXUS) — 🔥🚀 24.26%
+🥈 Przewaga nad #2: 🔥🚀 +9.00 pp
+🛡️ Vs BONDS: ⚪ n/a (fallback: cash=0)
 
-TRYB: RISK-ON ✅
+💥 SIŁA SYGNAŁU: 🔥🚀 BARDZO MOCNY
+🚦 TRYB: RISK-ON ✅
+🎯 AKCJA: 🟦 TRZYMAJ POZYCJĘ
+📌 POZOSTAŃ W: DM ex-US (EXUS)
+💶 KWOTA: 583 EUR
 
-RANKING:
-1. DM ex-US (EXUS): 23.57%
-2. EM (Vanguard FTSE EM Acc): 18.14%
-3. USA (VUAA): 13.19%
+📊 RANKING (momentum):
+1) DM ex-US (EXUS)       🔥🚀 24.26% 🟩🟩🟩🟩🟩🟩🟩🟩🟩🟩
+2) EM (Vanguard FTSE EM Acc)   🟢 15.27% 🟩🟩🟩⬜⬜⬜⬜⬜⬜⬜
+3) USA (VUAA)             🟩 11.86% ⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜
 
-BONDS (VAGF.DE): Brak danych
-
-AKCJA: ZMIANA POZYCJI
-KUP: DM ex-US (EXUS)
-KWOTA: 583 EUR
+🧾 BONDS (VAGF.DE): Brak danych
+🕒 Rebalance: 2026-02 (1× / miesiąc)
+📅 Anchor: Poprzedni miesiąc (iloc=-2)
