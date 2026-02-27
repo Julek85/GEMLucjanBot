@@ -1,2 +1,13 @@
-🔴 Brak danych rynkowych!
-Debug: ['USA (VUAA): Błąd pobierania VUAA.AS: None', 'DM ex-US (EXUS): Błąd pobierania EXUS.AS: None', 'BONDS (AGGH): Błąd pobierania AGGH.L: None']
+📌 GEM SIGNAL — 2026-02-27
+🏆 TOP: ✅ DM ex-US (EXUS) — 🔥🚀 24.26%
+🥈 Przewaga nad #2: 🟢 +12.40 pp
+🛡️ Vs BONDS: 🟢 +24.26 pp
+🚦 TRYB: RISK-ON ✅
+🎯 AKCJA: 🟦 TRZYMAJ
+📌 POZOSTAŃ W: DM ex-US (EXUS)
+💶 KWOTA: 583 EUR
+📊 RANKING:
+1) DM ex-US (EXUS) 🔥🚀 24.26%
+2) USA (VUAA)   🟩 11.86%
+
+🕒 Rebalance: 2026-02
