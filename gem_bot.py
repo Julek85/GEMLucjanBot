@@ -1,9 +1,14 @@
 import os
 import json
+import time
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
 from datetime import date
+import sys
+
+# Wymuszenie UTF-8 dla wyjścia, żeby polskie znaki (emoji, łą, ść) działały zawsze
+sys.stdout.reconfigure(encoding='utf-8')
 
 STATE_FILE = Path("state.json")
 OUT_FILE = Path("gem_message.txt")
@@ -13,246 +18,154 @@ OUT_FILE = Path("gem_message.txt")
 # ----------------------------
 
 def clean_ticker(t: str) -> str:
-    """Usuwa zbędne spacje i kropki z końca tickera."""
-    if not isinstance(t, str):
-        return ""
+    if not isinstance(t, str): return ""
     return t.strip().rstrip(".")
 
-def fmt_pct(x):
-    """Format procentowy z wartości ułamkowej (0.12 -> 12.00%)."""
-    return f"{x * 100:.2f}%" if x is not None else "Brak danych"
-
-def get_close_series(df: pd.DataFrame) -> pd.Series:
-    """Wyciąga serię cen (Adj Close/Close) z DataFrame, także gdy MultiIndex."""
-    if df is None or df.empty:
-        return pd.Series(dtype="float64")
-
-    if isinstance(df.columns, pd.MultiIndex):
-        level0 = df.columns.get_level_values(0)
-        for col in ["Adj Close", "Close"]:
-            if col in level0:
-                s = df.xs(col, level=0, axis=1).iloc[:, 0]
-                return s.dropna()
-
-    for col in ["Adj Close", "Close"]:
-        if col in df.columns:
-            return df[col].dropna()
-    return pd.Series(dtype="float64")
-
-def emoji_bar(value, vmin, vmax, width=10, full="🟩", empty="⬜"):
-    """Prosty pasek 'wykres' z emoji."""
-    if value is None:
-        return "❔" * width
-    if vmax <= vmin:
-        return full * width
-    x = (value - vmin) / (vmax - vmin)
-    x = max(0.0, min(1.0, x))
-    filled = int(round(x * width))
-    return full * filled + empty * (width - filled)
-
-def edge_badge(pp):
-    """Kolorowa etykieta przewagi w pp (konserwatywne progi)."""
-    if pp is None:
-        return "⚪ n/a"
-    ppv = pp * 100.0
-    if ppv < 0:
-        emo = "🔴"
-    elif ppv < 2:
-        emo = "🟨"
-    elif ppv < 5:
-        emo = "🟩"
-    elif ppv < 8:
-        emo = "🟢"
-    else:
-        emo = "🔥🚀"
-    return f"{emo} {ppv:+.2f} pp"
+def normalize_yf_ticker(t: str) -> str:
+    t = clean_ticker(t)
+    if not t: return ""
+    if "." in t or ":" in t: return t
+    if t.upper() == "AGGH": return "AGGH.L"
+    return t
 
 def score_badge(score):
-    """Kolorowy badge dla wyniku momentum (%)."""
-    if score is None:
-        return "⚪ n/a"
+    if score is None: return "⚪ n/a"
     pct = score * 100.0
-    if pct < 0:
-        emo = "🔴"
-    elif pct < 5:
-        emo = "🟨"
-    elif pct < 12:
-        emo = "🟩"
-    elif pct < 20:
-        emo = "🟢"
-    else:
-        emo = "🔥🚀"
+    if pct < 0: emo = "🔴"
+    elif pct < 5: emo = "🟨"
+    elif pct < 12: emo = "🟩"
+    elif pct < 20: emo = "🟢"
+    else: emo = "🔥🚀"
     return f"{emo} {pct:.2f}%"
 
-def signal_strength(is_risk_on: bool, top_score, edge_vs_bonds_or_cash, edge_vs_2):
-    """💥 SIŁA SYGNAŁU (konserwatywnie)."""
-    if not is_risk_on:
-        return "🛡️ OBRONNY (RISK-OFF)"
-    
-    top_pct = (top_score or 0.0) * 100.0
-    eb_pp = (edge_vs_bonds_or_cash or 0.0) * 100.0
-    e2_pp = (edge_vs_2 * 100.0) if edge_vs_2 is not None else None
+def edge_badge(pp):
+    if pp is None: return "⚪ n/a"
+    ppv = pp * 100.0
+    emo = "🔴" if ppv < 0 else ("🟨" if ppv < 2 else ("🟩" if ppv < 5 else "🟢"))
+    if ppv >= 8: emo = "🔥🚀"
+    return f"{emo} {ppv:+.2f} pp"
 
-    if e2_pp is None:
-        if top_pct >= 20 and eb_pp >= 8: return "🔥🚀 BARDZO MOCNY (brak #2)"
-        if top_pct >= 12 and eb_pp >= 5: return "🟢 MOCNY (brak #2)"
-        if top_pct >= 5 and eb_pp >= 2: return "🟩 UMIARKOWANY (brak #2)"
-        return "🟨 SŁABY (brak #2)"
+def emoji_bar(value, vmin, vmax, width=10):
+    if value is None: return "❔" * width
+    if vmax <= vmin: return "🟩" * width
+    x = max(0.0, min(1.0, (value - vmin) / (vmax - vmin)))
+    filled = int(round(x * width))
+    return "🟩" * filled + "⬜" * (width - filled)
 
-    if top_pct >= 20 and eb_pp >= 8 and e2_pp >= 5: return "🔥🚀 BARDZO MOCNY"
-    if eb_pp >= 5 and e2_pp >= 3: return "🟢 MOCNY"
-    if eb_pp >= 2 and e2_pp >= 2: return "🟩 UMIARKOWANY"
+def signal_strength(is_risk_on, top_score, edge_vs_bonds, edge_vs_2):
+    if not is_risk_on: return "🛡️ OBRONNY (RISK-OFF)"
+    top_p = (top_score or 0) * 100
+    eb_p = (edge_vs_bonds or 0) * 100
+    e2_p = (edge_vs_2 * 100) if edge_vs_2 is not None else 99
+    if top_p >= 20 and eb_p >= 8 and e2_p >= 5: return "🔥🚀 BARDZO MOCNY"
+    if eb_p >= 5 and e2_p >= 3: return "🟢 MOCNY"
+    if eb_p >= 2 and e2_p >= 2: return "🟩 UMIARKOWANY"
     return "🟨 SŁABY"
 
-def pick_anchor_index(me: pd.Series, today: date) -> int:
-    """Wybiera punkt odniesienia: -2 jeśli bieżący miesiąc jest niepełny."""
-    if me is None or me.empty:
-        return -1
-    last_period = me.index[-1].to_period("M")
-    curr_period = pd.Timestamp(today).to_period("M")
-    
-    if last_period == curr_period and me.index[-1].date() == today:
-        return -1
-        
-    return -2 if last_period == curr_period else -1
+def get_close_series(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty: return pd.Series(dtype="float64")
+    if isinstance(df.columns, pd.MultiIndex):
+        for col in ["Adj Close", "Close"]:
+            if col in df.columns.get_level_values(0):
+                return df.xs(col, level=0, axis=1).iloc[:, 0].dropna()
+    for col in ["Adj Close", "Close"]:
+        if col in df.columns: return df[col].dropna()
+    return pd.Series(dtype="float64")
+
+def yf_download_safe(ticker: str):
+    t = normalize_yf_ticker(ticker)
+    for attempt in range(1, 4):
+        try:
+            df = yf.download(t, period="2y", progress=False, threads=False, auto_adjust=False)
+            s = get_close_series(df)
+            if not s.empty: return s
+        except:
+            time.sleep(2 * attempt)
+    raise RuntimeError(f"Błąd pobierania: {t}")
+
+def pick_anchor_index(me, today_):
+    if me is None or me.empty: return -1
+    last_p = me.index[-1].to_period("M")
+    curr_p = pd.Timestamp(today_).to_period("M")
+    if last_p == curr_p and me.index[-1].date() == today_: return -1
+    return -2 if last_p == curr_p else -1
 
 # ----------------------------
-# Main logic
+# Main Logic
 # ----------------------------
 
 def main():
-    # 1) Secrets / config
     try:
         tickers_map = json.loads(os.getenv("GEM_TICKERS_JSON") or "{}")
         risk_assets = json.loads(os.getenv("GEM_RISK_ASSETS_JSON") or "[]")
-        b_name = (os.getenv("GEM_BONDS_NAME") or "").strip()
+        b_name_env = (os.getenv("GEM_BONDS_NAME") or "").strip()
         cap = os.getenv("GEM_CAPITAL_EUR") or "0"
     except Exception as e:
-        OUT_FILE.write_text(f"🔴 GEM Bot Error: Problem z Secrets ({e})", encoding="utf-8")
+        OUT_FILE.write_text(f"🔴 Błąd konfiguracji: {e}", encoding="utf-8")
         return
 
-    # Walidacja typów danych
-    if not isinstance(tickers_map, dict) or not isinstance(risk_assets, list) or not tickers_map or not risk_assets:
-        OUT_FILE.write_text("🔴 GEM Bot Error: Brak konfiguracji lub zły format danych w Secrets.", encoding="utf-8")
-        return
-
-    # 2) Download + compute momentum
-    details = {}
-    today = date.today()
+    b_name = b_name_env if b_name_env in tickers_map else next((k for k in tickers_map if "BONDS" in k.upper()), b_name_env)
+    details, errors, today = {}, [], date.today()
 
     for name, t_raw in tickers_map.items():
-        ticker = clean_ticker(t_raw)
-        if not ticker: continue
         try:
-            raw = yf.download(ticker, period="2y", progress=False)
-            series = get_close_series(raw)
-            if series.empty: continue
+            series = yf_download_safe(t_raw)
+            try: me = series.resample("ME").last().dropna()
+            except: me = series.resample("M").last().dropna()
             
-            try:
-                me = series.resample("ME").last().dropna()
-            except Exception:
-                me = series.resample("M").last().dropna()
-
-            anchor_idx = pick_anchor_index(me, today)
-            min_needed = 13 if anchor_idx == -1 else 14
+            idx = pick_anchor_index(me, today)
+            if len(me) < (13 if idx == -1 else 14): continue
             
-            if len(me) < min_needed: continue
+            val = me.iloc[idx]
+            score = ((val / me.iloc[idx-12]) + (val / me.iloc[idx-6])) / 2.0 - 1.0
+            details[name] = {"score": float(score), "ticker": normalize_yf_ticker(t_raw), "idx": idx}
+        except Exception as e:
+            errors.append(f"{name}: {e}")
 
-            anchor = me.iloc[anchor_idx]
-            score_12m = (anchor / me.iloc[anchor_idx - 12]) - 1.0
-            score_6m = (anchor / me.iloc[anchor_idx - 6]) - 1.0
-            score = (score_12m + score_6m) / 2.0
-            
-            details[name] = {"score": float(score), "ticker": ticker, "anchor_idx": anchor_idx}
-        except Exception:
-            continue
-
-    # 3) Ranking
-    ranked = sorted(
-        [(n, details[n]["score"]) for n in risk_assets if n in details],
-        key=lambda x: x[1], reverse=True
-    )
+    ranked = sorted([(n, details[n]["score"]) for n in risk_assets if n in details], key=lambda x: x[1], reverse=True)
+    
     if not ranked:
-        OUT_FILE.write_text("🔴 GEM Bot Error: Brak danych w Yahoo Finance!", encoding="utf-8")
+        OUT_FILE.write_text(f"🔴 Brak danych rynkowych!\nDebug: {errors[:3]}", encoding="utf-8")
         return
 
-    top_name, top_score = ranked[0]
-    anchor_idx = details[top_name]["anchor_idx"]
-
-    # 4) Bonds / Risk-on check
-    b_score = details.get(b_name, {}).get("score") if b_name else None
-    safe_b_score = b_score if b_score is not None else 0.0
-    is_risk_on = top_score > safe_b_score
-    choice = top_name if is_risk_on else (b_name if b_name else top_name)
-
-    # 5) State handling
-    curr_mo = pd.Timestamp(today).strftime("%Y-%m")
-    if not STATE_FILE.exists():
-        initial_state = {"active_label": choice, "last_rebalance_month": ""}
-        STATE_FILE.write_text(json.dumps(initial_state, indent=2), encoding="utf-8")
-
-    try:
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        state = {"active_label": choice, "last_rebalance_month": ""}
-        
+    top_n, top_s = ranked[0]
+    b_s = details.get(b_name, {}).get("score", 0.0)
+    is_risk_on = top_s > b_s
+    choice = top_n if is_risk_on else (b_name if b_name in details else top_n)
+    
+    # State
+    try: state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except: state = {"active_label": choice, "last_rebalance_month": ""}
+    
     old_label = state.get("active_label", choice)
+    curr_mo = pd.Timestamp(today).strftime("%Y-%m")
     is_switch = (old_label != choice)
-
+    
     if is_switch or state.get("last_rebalance_month") != curr_mo:
-        state.update({"active_label": choice, "last_rebalance_month": curr_mo})
-        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        STATE_FILE.write_text(json.dumps({"active_label": choice, "last_rebalance_month": curr_mo}, indent=2), encoding="utf-8")
 
-    # 6) Calculations for report
-    top_vs_2 = (top_score - ranked[1][1]) if len(ranked) > 1 else None
-    top_vs_b_or_cash = top_score - safe_b_score
-    top_vs_b = (top_score - b_score) if b_score is not None else None
-    strength_txt = signal_strength(is_risk_on, top_score, top_vs_b_or_cash, top_vs_2)
-
-    # 7) Action text
-    choice_ticker = details.get(choice, {}).get("ticker") or clean_ticker(tickers_map.get(choice, ""))
-    if is_switch:
-        action_txt = "🔁 ZMIANA POZYCJI"
-        action_lines = [f"💸 SPRZEDAJ: {old_label}", f"🛒 KUP: {choice} ({choice_ticker})"]
-    else:
-        action_txt = "🟦 TRZYMAJ POZYCJĘ" if is_risk_on else "🛡️ TRYB OBRONNY (BEZ ZMIAN)"
-        action_lines = [f"📌 POZOSTAŃ W: {old_label}"]
-
-    # 8) Build Message
-    vmin = min(s for _, s in ranked)
-    vmax = max(s for _, s in ranked)
+    # Report
+    e2 = (top_s - ranked[1][1]) if len(ranked) > 1 else None
+    eb = (top_s - b_s)
     
     lines = [
-        f"📌 GEM SIGNAL — {today.isoformat()}",
-        "",
-        f"🏆 TOP: ✅ {top_name} — {score_badge(top_score)}",
-        f"🥈 Przewaga nad #2: {edge_badge(top_vs_2)}",
-        f"🛡️ Vs BONDS: {edge_badge(top_vs_b) if b_score is not None else '⚪ n/a (fallback: cash=0)'}",
-        "",
-        f"💥 SIŁA SYGNAŁU: {strength_txt}",
+        f"📌 GEM SIGNAL — {today.isoformat()}", "",
+        f"🏆 TOP: ✅ {top_n} — {score_badge(top_s)}",
+        f"🥈 Przewaga nad #2: {edge_badge(e2)}",
+        f"🛡️ Vs BONDS: {edge_badge(eb)}", "",
+        f"💥 SIŁA: {signal_strength(is_risk_on, top_s, eb, e2)}",
         f"🚦 TRYB: {'RISK-ON ✅' if is_risk_on else 'RISK-OFF 🛡️'}",
-        f"🎯 AKCJA: {action_txt}"
+        f"🎯 AKCJA: {'🔁 ZMIANA' if is_switch else '🟦 TRZYMAJ'}",
+        f"💸 SPRZEDAJ: {old_label}" if is_switch else f"📌 POZOSTAŃ W: {old_label}",
+        f"🛒 KUP: {choice} ({details[choice]['ticker']})" if is_switch else "",
+        f"💶 KWOTA: {cap} EUR", "", "📊 RANKING:"
     ]
-    lines.extend(action_lines)
-    lines.append(f"💶 KWOTA: {cap} EUR")
-    lines.append("")
-    lines.append("📊 RANKING (momentum):")
+    vmin, vmax = min(s for _, s in ranked), max(s for _, s in ranked)
     for i, (n, s) in enumerate(ranked, 1):
-        bar = emoji_bar(s, vmin, vmax, width=10)
-        lines.append(f"{i}) {n:<20} {score_badge(s):>10} {bar}")
-    
-    lines.append("")
-    if b_name:
-        lines.append(f"🧾 BONDS ({b_name}): {fmt_pct(b_score)}")
-    else:
-        lines.append("🧾 BONDS: (nie ustawiono GEM_BONDS_NAME)")
-        
-    lines.append(f"🕒 Rebalance: {curr_mo} (1× / miesiąc)")
-    
-    anchor_desc = "Poprzedni miesiąc (iloc=-2)" if anchor_idx == -2 else "Bieżący miesiąc (iloc=-1)"
-    lines.append(f"📅 Anchor: {anchor_desc}")
+        lines.append(f"{i}) {n:<12} {score_badge(s)} {emoji_bar(s, vmin, vmax)}")
 
-    OUT_FILE.write_text("\n".join(lines), encoding="utf-8")
+    lines.append(f"\n🕒 Rebalance: {curr_mo} | Anchor: {'M-2' if details[top_n]['idx'] == -2 else 'M-1'}")
+    OUT_FILE.write_text("\n".join(filter(None, lines)), encoding="utf-8")
 
 if __name__ == "__main__":
-    main()
+    main() 
