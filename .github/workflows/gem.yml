@@ -1,36 +1,61 @@
 name: GEM Monthly Alert
+
 on:
   schedule:
     - cron: "15 12 1 * *"
   workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: gem-monthly
+  cancel-in-progress: true
+
 jobs:
   gem_job:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-python: "3.11"
-      - run: pip install pandas yfinance
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pandas yfinance
+
       - name: Run GEM Bot
         env:
           GEM_TICKERS_JSON: ${{ secrets.GEM_TICKERS_JSON }}
           GEM_RISK_ASSETS_JSON: ${{ secrets.GEM_RISK_ASSETS_JSON }}
           GEM_BONDS_NAME: ${{ secrets.GEM_BONDS_NAME }}
           GEM_CAPITAL_EUR: ${{ secrets.GEM_CAPITAL_EUR }}
+          PYTHONUTF8: "1"
         run: python gem_bot.py
-      - name: Save state
+
+      - name: Save state + message
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git pull --rebase || echo "Pull skipped"
+          
           git add state.json gem_message.txt || true
           git commit -m "Update state [skip ci]" || echo "No changes"
           git push || echo "Push failed"
+
       - name: Telegram
         if: always()
         run: |
-          [ -f gem_message.txt ] || echo "Błąd bota" > gem_message.txt
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-               -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" --data-urlencode "text@gem_message.txt"
+          [ -f gem_message.txt ] || echo "Błąd bota (sprawdź logi GitHub Actions)" > gem_message.txt
+          
+          curl -sS --fail -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+               -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+               -d "disable_web_page_preview=1" \
+               --data-urlencode "text@gem_message.txt"
