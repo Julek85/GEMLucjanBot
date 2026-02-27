@@ -1,2 +1,2 @@
 🔴 Brak danych rynkowych!
-Debug: ['USA (VUAA): Błąd pobierania: VUAA.AS', 'DM ex-US (EXUS): Błąd pobierania: EXUS.AS', 'BONDS (AGGH): Błąd pobierania: AGGH.L']
+Debug: ['USA (VUAA): Błąd pobierania VUAA.AS: None', 'DM ex-US (EXUS): Błąd pobierania EXUS.AS: None', 'BONDS (AGGH): Błąd pobierania AGGH.L: None']
