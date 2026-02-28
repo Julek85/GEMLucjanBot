@@ -8,7 +8,12 @@ from pathlib import Path
 from datetime import date, datetime
 import sys
 
-# Wymuszenie UTF-8, żeby logi i Telegram przyjmowały emoji bez błędu
+# --- KLUCZOWE IMPORTY (Tego brakowało!) ---
+import pandas as pd
+import yfinance as yf
+# ------------------------------------------
+
+# Wymuszenie UTF-8 dla logów
 if sys.stdout.encoding != 'utf-8':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -67,6 +72,7 @@ def month_end_series(series: pd.Series) -> pd.Series:
     s = s[~s.index.isna()]
     if s.empty: return s
     try:
+        # Fallback dla różnych wersji pandas (ME vs M)
         return s.resample("ME").last().dropna()
     except ValueError:
         return s.resample("M").last().dropna()
@@ -75,28 +81,27 @@ def calc_momentum(monthly: pd.Series) -> tuple[float, float]:
     if len(monthly) < 13:
         raise ValueError("Za mało danych (min. 13 miesięcy).")
     r12_1 = (monthly.iloc[-2] / monthly.iloc[-13]) - 1.0
-    if len(monthly) < 7:
-        raise ValueError("Za mało danych (min. 7 miesięcy) dla 6M.")
-    r6 = (monthly.iloc[-1] / monthly.iloc[-7]) - 1.0
+    # Obliczamy 6M na podstawie ostatnich 7 punktów końcomiesięcznych
+    r6 = (monthly.iloc[-1] / monthly.iloc[-7]) - 1.0 if len(monthly) >= 7 else 0.0
     return float(r12_1), float(r6)
 
 def main():
     try:
+        # Pobieranie konfiguracji z ENV
         tickers = json.loads(os.environ.get("GEM_TICKERS_JSON", "{}"))
         risk_assets = json.loads(os.environ.get("GEM_RISK_ASSETS_JSON", "[]"))
         bonds_name = os.environ.get("GEM_BONDS_NAME", "BONDS (AGGH)")
         capital_eur = os.environ.get("GEM_CAPITAL_EUR", "0")
 
         if not tickers or not risk_assets:
-            raise ValueError("Brak konfiguracji ENV: GEM_TICKERS_JSON i/lub GEM_RISK_ASSETS_JSON.")
+            raise ValueError("Brak konfiguracji ENV.")
 
         yf_symbols = list(set(tickers.values()))
-        data = yf_download_with_retries(yf_symbols, period="3y", interval="1d", attempts=3, sleep_sec=5, timeout=20)
+        data = yf_download_with_retries(yf_symbols)
 
         def get_adj(symbol: str) -> pd.Series:
             if isinstance(data.columns, pd.MultiIndex):
-                if ("Adj Close", symbol) in data.columns:
-                    return data[("Adj Close", symbol)]
+                return data[("Adj Close", symbol)]
             return data["Adj Close"]
 
         details = {}
@@ -107,121 +112,76 @@ def main():
                 r12_1, r6 = calc_momentum(monthly)
                 score = (r12_1 + r6) / 2.0
                 last_price = float(adj.dropna().iloc[-1])
-                details[label] = {"sym": sym, "r12_1": r12_1, "r6": r6, "score": score, "last_price": last_price}
+                details[label] = {"sym": sym, "score": score, "last_price": last_price}
             except Exception as e:
-                print(f"Pominięto {label} ({sym}): {e}")
+                print(f"Pominięto {label}: {e}")
 
+        # Ranking aktywów ryzykowanych
         ranked = sorted(
             [(name, details[name]["score"]) for name in risk_assets if name in details],
             key=lambda x: x[1],
             reverse=True
         )
 
-        if not ranked:
-            raise ValueError("Brak wystarczających danych do wyliczenia rankingu!")
-
-        # ---------------------------------------------------------
-        # NAPRAWIONA LOGIKA GEM (Porównanie z Obligacjami)
-        # ---------------------------------------------------------
         top_name, top_score = ranked[0]
-        bonds_score = details.get(bonds_name, {}).get("score", 0.0)
+        bonds_score = details.get(bonds_name, {}).get("score", -99.0)
 
+        # Logika GEM: Akcje vs Obligacje
         is_risk_on = top_score > bonds_score
-        if is_risk_on:
-            choice = top_name
-            mode_str = "RISK-ON ✅"
-        else:
-            choice = bonds_name if bonds_name in details else top_name
-            mode_str = "RISK-OFF 🛡️"
+        choice = top_name if is_risk_on else bonds_name
+        mode_str = "RISK-ON ✅" if is_risk_on else "RISK-OFF 🛡️"
 
-        # ====== STAN + OPCJA A ======
+        # Stan i wycena (Opcja A)
         state = load_state()
         today = date.today()
         current_month = f"{today.year}-{today.month:02d}"
-
-        # Używamy domyślnego choice, jeśli to pierwszy start bota
+        
         current_active_label = state.get("active_label", choice)
-        previous_active_label = current_active_label
-
-        current_ticker = extract_ticker_from_label(current_active_label)
-        new_ticker = extract_ticker_from_label(choice)
-
-        is_new_month = (state.get("last_rebalance_month") != current_month)
-        is_different_asset = (current_ticker != new_ticker)
-
-        # Inicjalizacja ceny wejściowej, jeśli brakuje
+        
+        # Jeśli to pierwsze uruchomienie, zapisz cenę wejścia
         if state.get("entry_price") is None and current_active_label in details:
-            state["entry_price"] = float(details[current_active_label]["last_price"])
-            state["active_since"] = state.get("active_since") or current_month
-
-        if is_new_month and is_different_asset:
-            rebalance_needed = True
-            action_title = "🔁 ZMIANA POZYCJI"
-            status_note = f"WYKRYTO ZMIANĘ: {current_active_label} -> {choice}"
-
-            state["active_label"] = choice
-            state["last_rebalance_month"] = current_month
+            state["entry_price"] = details[current_active_label]["last_price"]
             state["active_since"] = current_month
-            state["entry_price"] = float(details[choice]["last_price"])
-            save_state(state)
-            current_active_label = choice
-        else:
-            rebalance_needed = False
-            action_title = "🟦 TRZYMAJ"
-            status_note = "Utrzymujemy obecną pozycję"
-            if is_new_month:
-                state["last_rebalance_month"] = current_month
-                save_state(state)
 
-        # Opcja A – wartość i % od wejścia
-        est_value = None
-        pct_gain = None
+        # Sprawdzenie zmiany pozycji
+        rebalance_needed = False
+        if current_active_label != choice and state.get("last_rebalance_month") != current_month:
+            rebalance_needed = True
+            state["active_label"] = choice
+            state["entry_price"] = details[choice]["last_price"]
+            state["active_since"] = current_month
+        
+        state["last_rebalance_month"] = current_month
+        save_state(state)
+
+        # Obliczanie zysku/straty
+        report_val = ""
         if state.get("entry_price") and current_active_label in details:
-            current_price = float(details[current_active_label]["last_price"])
-            est_value = float(capital_eur) * (current_price / float(state["entry_price"]))
-            pct_gain = (current_price / float(state["entry_price"]) - 1.0) * 100.0
+            c_price = details[current_active_label]["last_price"]
+            e_price = state["entry_price"]
+            current_value = float(capital_eur) * (c_price / e_price)
+            gain_pct = (c_price / e_price - 1) * 100
+            report_val = f"\n📈 WARTOŚĆ: {current_value:.2f} EUR ({gain_pct:+.2f}%)"
 
-        # ====== RAPORT ======
-        lines = [
-            f"📌 GEM SIGNAL — {datetime.now().strftime('%Y-%m-%d')}",
-            "",
-            f"🏆 TOP: ✅ {top_name} — {fmt_pct(top_score)}",
-            f"🛡️ Vs BONDS: {fmt_pct(bonds_score) if bonds_name in details else 'Brak danych'}",
+        # Budowa wiadomości
+        msg = [
+            f"📌 GEM SIGNAL — {today}",
             f"🚦 TRYB: {mode_str}",
+            f"🏆 LIDER: {top_name} ({fmt_pct(top_score)})",
+            f"🛡️ OBLIGACJE: {fmt_pct(bonds_score)}",
             "",
-            "📊 RANKING (momentum):",
+            "🎯 AKCJA: " + ("ZMIANA POZYCJI 🔁" if rebalance_needed else "TRZYMAJ 🟦"),
+            f"📌 AKTUALNIE W: {choice}",
+            report_val,
+            f"🕒 W POZYCJI OD: {state.get('active_since')}",
+            f"\nStatus: {'Wymagana transakcja!' if rebalance_needed else 'Portfel OK'}"
         ]
 
-        for i, (name, score) in enumerate(ranked, 1):
-            lines.append(f"{i}) {name:<18} {fmt_pct(score)}")
-
-        if bonds_name in details:
-            lines.append(f"\n🧾 BONDS ({bonds_name}): {fmt_pct(details[bonds_name]['score'])}")
-
-        lines.append(f"\n🎯 AKCJA: {action_title}")
-        if rebalance_needed:
-            lines.append(f"💸 SPRZEDAJ: {previous_active_label}")
-            lines.append(f"🛒 KUP: {choice}")
-        else:
-            lines.append(f"📌 POZOSTAŃ W: {current_active_label}")
-
-        lines.append(f"\n💶 KWOTA STARTOWA: {capital_eur} EUR")
-        if est_value is not None:
-            if pct_gain is not None:
-                lines.append(f"📈 WARTOŚĆ: {est_value:.2f} EUR ({pct_gain:+.2f}%)")
-            else:
-                lines.append(f"📈 WARTOŚĆ: {est_value:.2f} EUR")
-            lines.append(f"🕒 W POZYCJI OD: {state.get('active_since')}")
-
-        lines.append(f"\nStatus bota: {status_note}")
-        lines.append(f"Rebalance: {state.get('last_rebalance_month')}")
-
-        OUT_FILE.write_text("\n".join(lines), encoding="utf-8")
+        OUT_FILE.write_text("\n".join(msg), encoding="utf-8")
 
     except Exception as e:
-        err_msg = f"🔴 GEM Bot ERROR\nTime: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{type(e).__name__}: {e}"
-        OUT_FILE.write_text(err_msg, encoding="utf-8")
-        raise
+        OUT_FILE.write_text(f"🔴 BŁĄD BOTA: {e}", encoding="utf-8")
+        raise e
 
 if __name__ == "__main__":
     main()
