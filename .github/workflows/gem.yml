@@ -15,6 +15,7 @@ concurrency:
 jobs:
   gem_job:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,11 +41,13 @@ jobs:
           GEM_BONDS_NAME: 'BONDS (AGGH)'
           GEM_CAPITAL_EUR: '583'
 
+      # ✅ COMMIT TYLKO NA CRON — ręczne testy NIC nie zapisują
       - name: Commit and push state.json
+        if: github.event_name == 'schedule'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase
+
           git add state.json
           git diff --cached --quiet || git commit -m "Update GEM state.json [skip ci]"
           git push
