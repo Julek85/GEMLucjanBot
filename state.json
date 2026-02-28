@@ -1,4 +1,6 @@
 {
   "active_label": "DM ex-US (EXUS)",
-  "last_rebalance_month": "2026-02"
+  "last_rebalance_month": null,
+  "active_since": null,
+  "entry_price": null
 }
