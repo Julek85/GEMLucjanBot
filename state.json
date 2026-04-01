@@ -1,6 +1,6 @@
 {
-  "active_label": "DM ex-US (EXUS)",
-  "last_rebalance_month": "2026-03",
-  "active_since": "2026-03",
-  "entry_price": 45.13999938964844
+    "current_position": "DM ex-US (EXUS)",
+    "enter_date": "2026-03",
+    "portfolio_value": 543.86,
+    "last_price": 36.34
 }
