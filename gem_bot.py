@@ -10,7 +10,7 @@ from datetime import datetime
 TICKERS = json.loads(os.getenv("GEM_TICKERS_JSON"))
 RISK_ASSETS = json.loads(os.getenv("GEM_RISK_ASSETS_JSON"))
 BONDS_NAME = os.getenv("GEM_BONDS_NAME")
-CAPITAL_START = float(os.getenv("GEM_CAPITAL_EUR", "583"))
+CAPITAL_START = float(os.getenv("GEM_CAPITAL_EUR", "544"))
 
 STATE_FILE = "state.json"
 MESSAGE_FILE = "gem_message.txt"
