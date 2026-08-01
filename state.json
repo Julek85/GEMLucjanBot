@@ -1,6 +1,4 @@
 {
-    "current_position": "EM (Vanguard FTSE EM Acc)",
-    "enter_date": "2026-06",
-    "portfolio_value": 572.772781906088,
-    "last_price": 65.66999816894531
+  "active_label": "EM (Vanguard FTSE EM Acc)",
+  "last_rebalance_month": "2026-08"
 }
